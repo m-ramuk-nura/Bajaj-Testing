@@ -13,7 +13,7 @@ import nest_asyncio
 nest_asyncio.apply()
 
 API_KEY = "AIzaSyAzthcdc26drgtw8CzKMtcCGgPqs48yJDw"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 
 app = FastAPI()
 

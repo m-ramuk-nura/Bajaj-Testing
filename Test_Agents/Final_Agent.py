@@ -10,8 +10,8 @@ import multiprocessing
 import subprocess
 import time
 
-API_KEY = "AIzaSyBtL3V_pVZw0yoEmVZp6S88CgvOd1NzySs"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+API_KEY = "sk-spgw-api01-93e548ba90c413ff7b390e743d9b3a24"
+GEMINI_API_URL = "https://register.hackrx.in/llm/openai"
 
 app = FastAPI()
 
@@ -20,30 +20,35 @@ async def ask_ai(dom_html, last_action=None, scraped_data=None, question=""):
     """Send the filtered DOM to the AI and get the next action."""
     prompt = f"""
 You are an autonomous web agent. Your task is to interact with the given webpage
-to answer the user's question:
+step by step until you can answer the user's question.
 
 QUESTION: "{question}"
 
 ---
 RULES:
 1. Allowed actions (always return exactly one of these in JSON):
-    - SCRAPE(selector) → extract text from the given selector
-    - CLICK(selector) → click the given element
-    - FILL(selector, value) → fill an input with the given value
-    - STOP → stop execution, return when the answer is found
-    - If Challenge or Task Is Completed and data is Found For The Given Question Then Stop the Agent
+    - SCRAPE(selector)
+    - CLICK(selector)
+    - FILL(selector, value)
+    - STOP → only use when final answer, completion code, or “Challenge Completed” message is clearly visible
 
 2. Completion Condition:
-    - If the "completion code" or final answer is visible in the DOM or already scraped,
-      immediately return:
-      {{"action": "STOP", "answer": "<the code>"}}
+    - Stop if:
+      - Final answer or "completion code" is visible in DOM or in Scraped Data
+      - OR any visible text clearly indicates the challenge is completed (e.g., “Challenge Completed”, “All Done”)
+    - Do NOT repeat actions with the same selector/value combination unless new data appears
 
-3. Efficiency:
-    - Do NOT repeat actions unnecessarily.
-    - If the next logical step is unclear, prefer SCRAPE over random CLICK.
+3. Continuity:
+    - Track all previously scraped secrets or filled values in Scraped Data
+    - If a previously scraped secret is about to be filled again, STOP unless new info is present
 
-4. Formatting:
-    - Reply ONLY in valid JSON.
+4. Efficiency:
+    - Prefer SCRAPE first
+    - Avoid repeating identical actions
+    - If stuck in a loop for 5 consecutive actions without new scraped data, STOP and return partial data
+
+5. Formatting:
+    - Reply ONLY in valid JSON
     - Example: {{"action": "SCRAPE", "selector": "div span.kbd"}}
 
 ---
@@ -55,40 +60,48 @@ Last Action: {last_action}
 Scraped Data: {scraped_data}
 """
 
-    headers = {"Content-Type": "application/json"}
-    payload = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+
+
+
+
+    headers = {
+        "Authorization": f"Bearer {API_KEY}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": "gpt-4.1-mini",  # or whatever model the endpoint supports
+        "messages": [{"role": "user", "content": prompt}],
+    }
 
     retries, delay = 3, 1
     for i in range(retries):
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{GEMINI_API_URL}?key={API_KEY}",
-                    headers=headers,
-                    data=json.dumps(payload),
-                ) as resp:
+                async with session.post(GEMINI_API_URL, headers=headers, json=payload) as resp:
                     resp.raise_for_status()
                     result = await resp.json()
 
-            if result and "candidates" in result and result["candidates"]:
-                text_response = result["candidates"][0]["content"]["parts"][0]["text"]
-                if text_response.strip().startswith("```json") and text_response.strip().endswith("```"):
+            if "choices" in result and result["choices"]:
+                text_response = result["choices"][0]["message"]["content"]
+
+                # cleanup code block if wrapped in ```json
+                if text_response.strip().startswith("```json"):
                     text_response = text_response.strip().removeprefix("```json\n").removesuffix("```")
-                json_match = re.search(r"\{.*\}", text_response, re.DOTALL)
-                if json_match:
-                    return json.loads(json_match.group(0))
-                else:
-                    return {"action": "STOP"}
+
+                match = re.search(r"\{.*\}", text_response, re.DOTALL)
+                if match:
+                    return json.loads(match.group(0))
+                return {"action": "STOP"}
             else:
                 return {"action": "STOP"}
-        except (aiohttp.ClientError, json.JSONDecodeError) as e:
+        except Exception as e:
             print(f"Error on attempt {i+1}: {e}")
             if i < retries - 1:
                 await asyncio.sleep(delay)
                 delay *= 2
             else:
                 return {"action": "STOP"}
-    return {"action": "STOP"}
+
 
 
 # ---------------- Core Playwright Logic ----------------
