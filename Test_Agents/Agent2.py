@@ -12,8 +12,8 @@ import nest_asyncio
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
 
-API_KEY = "AIzaSyAzthcdc26drgtw8CzKMtcCGgPqs48yJDw"
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+API_KEY = "AIzaSyBC-pJShjdD_FjVP3mll0kbCDytW-LAIHo"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
 
 app = FastAPI()
 

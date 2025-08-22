@@ -20,35 +20,30 @@ async def ask_ai(dom_html, last_action=None, scraped_data=None, question=""):
     """Send the filtered DOM to the AI and get the next action."""
     prompt = f"""
 You are an autonomous web agent. Your task is to interact with the given webpage
-step by step until you can answer the user's question.
+to answer the user's question:
 
 QUESTION: "{question}"
 
 ---
 RULES:
 1. Allowed actions (always return exactly one of these in JSON):
-    - SCRAPE(selector)
-    - CLICK(selector)
-    - FILL(selector, value)
-    - STOP → only use when final answer, completion code, or “Challenge Completed” message is clearly visible
+    - SCRAPE(selector) → extract text from the given selector
+    - CLICK(selector) → click the given element
+    - FILL(selector, value) → fill an input with the given value
+    - STOP → stop execution, return when the answer is found
+    - If Challenge or Task Is Completed and data is Found For The Given Question Then Stop the Agent
 
 2. Completion Condition:
-    - Stop if:
-      - Final answer or "completion code" is visible in DOM or in Scraped Data
-      - OR any visible text clearly indicates the challenge is completed (e.g., “Challenge Completed”, “All Done”)
-    - Do NOT repeat actions with the same selector/value combination unless new data appears
+    - If the "completion code" or final answer is visible in the DOM or already scraped,
+      immediately return:
+      {{"action": "STOP", "answer": "<the code>"}}
 
-3. Continuity:
-    - Track all previously scraped secrets or filled values in Scraped Data
-    - If a previously scraped secret is about to be filled again, STOP unless new info is present
+3. Efficiency:
+    - Do NOT repeat actions unnecessarily.
+    - If the next logical step is unclear, prefer SCRAPE over random CLICK.
 
-4. Efficiency:
-    - Prefer SCRAPE first
-    - Avoid repeating identical actions
-    - If stuck in a loop for 5 consecutive actions without new scraped data, STOP and return partial data
-
-5. Formatting:
-    - Reply ONLY in valid JSON
+4. Formatting:
+    - Reply ONLY in valid JSON.
     - Example: {{"action": "SCRAPE", "selector": "div span.kbd"}}
 
 ---
@@ -59,7 +54,6 @@ DOM (only <div> elements):
 Last Action: {last_action}
 Scraped Data: {scraped_data}
 """
-
 
 
 
@@ -108,6 +102,7 @@ Scraped Data: {scraped_data}
 async def _run_playwright_agent(url: str, question: str):
     """The core logic for the web agent."""
     last_scraped_result = None
+    scraped_history = []
     try:
         async with async_playwright() as p:
             # Use a different approach to launch browser on Windows
@@ -152,6 +147,7 @@ async def _run_playwright_agent(url: str, question: str):
                         scraped_data = await page.text_content(selector)
                         if scraped_data:
                             last_scraped_result = scraped_data
+                            scraped_history.append({"data": divs_html})
                         print("Scraped:", scraped_data)
                     except Exception as e:
                         print(f"Scrape failed: {e}")
@@ -180,7 +176,10 @@ async def _run_playwright_agent(url: str, question: str):
 
             await context.close()
             await browser.close()
-            return last_scraped_result if last_scraped_result else "No data found."
+            return {
+                "final_answer": last_scraped_result if last_scraped_result else "No data found.",
+                "scraped_history": scraped_history
+            }
     except Exception as e:
         print(f"An error occurred during Playwright execution: {e}")
         return f"An error occurred: {str(e)}"
