@@ -4,7 +4,7 @@ from services.ip_utils import get_client_ip
 from services.db_logger import log_query
 from services.embedder import build_faiss_index
 from services.retriever import retrieve_chunks
-from services.llm_service import query_gemini
+from services.llm_service import query_gemini,query_openai
 from Extraction_Models import parse_document_url, parse_document_file
 from threading import Lock
 import hashlib, time
@@ -60,7 +60,7 @@ async def run_query(request: QueryRequest, fastapi_request: Request, background_
         user_ip = get_client_ip(fastapi_request)
         user_agent = fastapi_request.headers.get("user-agent", "Unknown")
         doc_id = get_document_id(request.documents)
-
+        print("Input :",request.documents,request.questions)
         # Parsing
         t_parse_start = time.time()
         with doc_cache_lock:
@@ -100,7 +100,7 @@ async def run_query(request: QueryRequest, fastapi_request: Request, background_
             futures = []
             for i in range(0, len(request.questions), batch_size):
                 batch = request.questions[i:i + batch_size]
-                futures.append(executor.submit(query_gemini, batch, context_chunks))
+                futures.append(executor.submit(query_openai, batch, context_chunks))
             for i, future in enumerate(futures):
                 t_batch_start = time.time()
                 result = future.result()
@@ -191,3 +191,81 @@ async def run_local_query(request: LocalQueryRequest, fastapi_request: Request, 
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+    
+
+
+
+@router.post("/hackrx/run_openai")
+async def run_query_openai(request: QueryRequest, fastapi_request: Request, background_tasks: BackgroundTasks):
+    timings = {}
+    try:
+        user_ip = get_client_ip(fastapi_request)
+        user_agent = fastapi_request.headers.get("user-agent", "Unknown")
+        doc_id = get_document_id(request.documents)
+
+        # Parsing
+        t_parse_start = time.time()
+        with doc_cache_lock:
+            if doc_id in doc_cache:
+                cached = doc_cache[doc_id]
+                text_chunks, index, texts = cached["chunks"], cached["index"], cached["texts"]
+                timings["parse_time"] = 0
+                timings["index_time"] = 0
+            else:
+                text_chunks = parse_document_url(request.documents)
+                t_parse_end = time.time()
+                timings["parse_time"] = t_parse_end - t_parse_start
+
+                # Indexing
+                t_index_start = time.time()
+                index, texts = build_faiss_index(text_chunks)
+                t_index_end = time.time()
+                timings["index_time"] = t_index_end - t_index_start
+
+                doc_cache[doc_id] = {"chunks": text_chunks, "index": index, "texts": texts}
+        timings["cache_check_time"] = time.time() - t_parse_start
+
+        # Retrieval
+        t_retrieve_start = time.time()
+        all_chunks = set()
+        for question in request.questions:
+            all_chunks.update(retrieve_chunks(index, texts, question))
+        context_chunks = list(all_chunks)
+        timings["retrieval_time"] = time.time() - t_retrieve_start
+
+        # OpenAI LLM query
+        t_llm_start = time.time()
+        batch_size = 10
+        results_dict = {}
+        llm_batch_timings = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for i in range(0, len(request.questions), batch_size):
+                batch = request.questions[i:i + batch_size]
+                futures.append(executor.submit(query_gemini, batch, context_chunks))
+            for i, future in enumerate(futures):
+                t_batch_start = time.time()
+                result = future.result()
+                t_batch_end = time.time()
+                llm_batch_timings.append(t_batch_end - t_batch_start)
+                if "answers" in result:
+                    for j, ans in enumerate(result["answers"]):
+                        results_dict[i * batch_size + j] = ans
+        timings["llm_time"] = time.time() - t_llm_start
+        timings["llm_batch_times"] = llm_batch_timings
+
+        responses = [results_dict.get(i, "Not Found") for i in range(len(request.questions))]
+
+        # Logging
+        total_float_time = sum(v for v in timings.values() if isinstance(v, (int, float)))
+        for q, a in zip(request.questions, responses):
+            background_tasks.add_task(log_query, request.documents, q, a, user_ip, total_float_time, user_agent)
+
+        # Print timings in console
+        print_timings(timings)
+
+        return {"answers": responses}
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
+
