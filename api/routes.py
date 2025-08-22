@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 router = APIRouter()
 
 class QueryRequest(BaseModel):
-    documents: str
+    url: str
     questions: list[str]
 
 class LocalQueryRequest(BaseModel):
@@ -59,8 +59,8 @@ async def run_query(request: QueryRequest, fastapi_request: Request, background_
     try:
         user_ip = get_client_ip(fastapi_request)
         user_agent = fastapi_request.headers.get("user-agent", "Unknown")
-        doc_id = get_document_id(request.documents)
-        print("Input :",request.documents,request.questions)
+        doc_id = get_document_id(request.url)
+        print("Input :",request.url,request.questions)
         # Parsing
         t_parse_start = time.time()
         with doc_cache_lock:
@@ -70,7 +70,7 @@ async def run_query(request: QueryRequest, fastapi_request: Request, background_
                 timings["parse_time"] = 0
                 timings["index_time"] = 0
             else:
-                text_chunks = parse_document_url(request.documents)
+                text_chunks = parse_document_url(request.url)
                 t_parse_end = time.time()
                 timings["parse_time"] = t_parse_end - t_parse_start
 
@@ -117,7 +117,7 @@ async def run_query(request: QueryRequest, fastapi_request: Request, background_
         # Logging
         total_float_time = sum(v for v in timings.values() if isinstance(v, (int, float)))
         for q, a in zip(request.questions, responses):
-            background_tasks.add_task(log_query, request.documents, q, a, user_ip, total_float_time, user_agent)
+            background_tasks.add_task(log_query, request.url, q, a, user_ip, total_float_time, user_agent)
 
         # Print timings in console
         print_timings(timings)
@@ -201,7 +201,7 @@ async def run_query_openai(request: QueryRequest, fastapi_request: Request, back
     try:
         user_ip = get_client_ip(fastapi_request)
         user_agent = fastapi_request.headers.get("user-agent", "Unknown")
-        doc_id = get_document_id(request.documents)
+        doc_id = get_document_id(request.url)
 
         # Parsing
         t_parse_start = time.time()
@@ -212,7 +212,7 @@ async def run_query_openai(request: QueryRequest, fastapi_request: Request, back
                 timings["parse_time"] = 0
                 timings["index_time"] = 0
             else:
-                text_chunks = parse_document_url(request.documents)
+                text_chunks = parse_document_url(request.url)
                 t_parse_end = time.time()
                 timings["parse_time"] = t_parse_end - t_parse_start
 
@@ -259,7 +259,7 @@ async def run_query_openai(request: QueryRequest, fastapi_request: Request, back
         # Logging
         total_float_time = sum(v for v in timings.values() if isinstance(v, (int, float)))
         for q, a in zip(request.questions, responses):
-            background_tasks.add_task(log_query, request.documents, q, a, user_ip, total_float_time, user_agent)
+            background_tasks.add_task(log_query, request.url, q, a, user_ip, total_float_time, user_agent)
 
         # Print timings in console
         print_timings(timings)
