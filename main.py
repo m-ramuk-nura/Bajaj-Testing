@@ -9,11 +9,14 @@ app = FastAPI()
 
 UPSTREAM_LLM_URL = "https://register.hackrx.in/llm/openai"
 UPSTREAM_KEY = "sk-spgw-api01-93e548ba90c413ff7b390e743d9b3a24"
-EXTERNAL_CHALLENGE_URL = "http://localhost:8000/run-agent"  # your 8000-running endpoint
+
+# Two possible external agents
+EXTERNAL_AGENT_8000 = "http://localhost:8000/run-agent"
+EXTERNAL_AGENT_8002 = "http://localhost:8002/run-agent"
 
 class ChallengeRequest(BaseModel):
-    url: str
-    questions: List[str]  # multiple questions
+    url: Optional[str] = None
+    questions: List[str]
 
 @app.post("/challenge/solve")
 async def challenge_solve(req: ChallengeRequest, x_subscription_key: Optional[str] = Header(None)):
@@ -26,18 +29,21 @@ async def challenge_solve(req: ChallengeRequest, x_subscription_key: Optional[st
         # Combine questions with numbering
         combined_question = "\n".join([f"Q{i+1}: {q}" for i, q in enumerate(req.questions)])
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        # Pick which external agent to hit
+        if req.url:
+            external_url = EXTERNAL_AGENT_8000   # URL given → use 8000 agent
+            payload = {"url": req.url, "question": combined_question}
+        else:
+            external_url = EXTERNAL_AGENT_8002   # No URL → use 8002 agent
+            payload = {"question": combined_question}
 
-            # Send questions to external agent
-            payload = {
-                "url": req.url,
-                "question": combined_question
-            }
-            resp = await client.post(EXTERNAL_CHALLENGE_URL, headers=headers, json=payload)
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            # Call external agent
+            resp = await client.post(external_url, headers=headers, json=payload)
             data = resp.json()
             external_answer = data.get("answer") or data.get("answers") or "No answer"
 
-            # Send combined questions + external answer to internal LLM
+            # Send combined info to internal LLM
             internal_payload = {
                 "messages": [
                     {
@@ -54,7 +60,7 @@ async def challenge_solve(req: ChallengeRequest, x_subscription_key: Optional[st
                         "role": "user",
                         "content": (
                             f"Here is the challenge info:\n"
-                            f"- URL: {req.url}\n"
+                            f"- URL: {req.url or 'Not Provided'}\n"
                             f"- Questions:\n{req.questions}\n"
                             f"- External Agent Answer General: {external_answer}\n\n"
                             "Using this external knowledge, give me the final solution as a JSON list."
@@ -68,7 +74,7 @@ async def challenge_solve(req: ChallengeRequest, x_subscription_key: Optional[st
             internal_data_json = internal_resp.json()
             internal_answer_str = internal_data_json.get("choices", [{}])[0].get("message", {}).get("content", "[]")
 
-            # Safely parse the LLM output string into a Python list
+            # Safely parse LLM output into list
             try:
                 internal_answer_list = ast.literal_eval(internal_answer_str)
                 if not isinstance(internal_answer_list, list):
