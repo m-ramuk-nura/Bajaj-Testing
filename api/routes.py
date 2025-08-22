@@ -123,6 +123,7 @@ async def run_query(request: QueryRequest, fastapi_request: Request, background_
         print_timings(timings)
 
         # Return ONLY answers
+        print("answers : ",responses)
         return {"answers": responses}
 
     except Exception as e:
